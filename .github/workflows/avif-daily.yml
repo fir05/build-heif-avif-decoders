@@ -1,0 +1,139 @@
+name: avif-daily
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  detect:
+    name: Detect upstream libavif update
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      latest_sha: ${{ steps.check.outputs.latest_sha }}
+      latest_ref: ${{ steps.check.outputs.latest_ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Determine upstream latest commit
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Determine latest upstream commit
+          if [ -d libavif ]; then
+            pushd libavif >/dev/null
+            git fetch origin main --depth 1
+            LATEST_SHA=$(git rev-parse origin/main)
+            popd >/dev/null
+          else
+            git clone --depth 1 https://github.com/AOMediaCodec/libavif libavif
+            pushd libavif >/dev/null
+            LATEST_SHA=$(git rev-parse HEAD)
+            popd >/dev/null
+          fi
+
+          echo "latest=$LATEST_SHA"
+
+          # Check if we already released this SHA
+          REPO="${GITHUB_REPOSITORY}"
+          TAG="libavif-${LATEST_SHA}"
+          API="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" "$API")
+          if [ "$STATUS" = "200" ]; then
+            echo "Release for $TAG already exists. Skipping build."
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            echo "No release for $TAG. Building."
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          fi
+          echo "latest_sha=$LATEST_SHA" >> $GITHUB_OUTPUT
+          echo "latest_ref=origin/main" >> $GITHUB_OUTPUT
+
+  build-windows:
+    name: Build avif.dll (${{ matrix.arch }})
+    needs: detect
+    if: needs.detect.outputs.should_build == 'true'
+    runs-on: windows-2019
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [win64, win32]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+      - name: Prepare dependencies
+        shell: bash
+        run: |
+          python3 -m pip install meson
+          mv nasm.exe C:/Windows/System32
+          git submodule update --init --recursive --depth 1 --recommend-shallow
+          # Update libavif working tree to latest upstream commit detected
+          pushd libavif >/dev/null
+          git fetch origin main --depth 1
+          git checkout ${{ needs.detect.outputs.latest_sha }}
+          git submodule update --init --recursive --depth 1 || true
+          popd >/dev/null
+      - name: Build dav1d
+        shell: bash
+        run: |
+          cd dav1d
+          mkdir -p build
+          cd build
+          meson ..
+          ninja install
+      - name: Build libavif with libyuv (static) and export YUV APIs
+        shell: bash
+        run: |
+          cd libavif
+          mkdir -p build
+          cd build
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_LIBYUV=ON -DAVIF_LOCAL_LIBYUV=ON -DDAV1D_INCLUDE_DIR="c:/include" -DDAV1D_LIBRARY="c:/lib/dav1d.lib"
+          ninja
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p upload
+          cp libavif/build/avif.dll upload/avif-${{ matrix.arch }}.dll
+          cp libavif/build/avif.lib upload/avif-${{ matrix.arch }}.lib
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: avif-${{ matrix.arch }}
+          path: upload
+
+  release:
+    name: Publish release
+    needs: [detect, build-windows]
+    if: needs.detect.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: libavif-${{ needs.detect.outputs.latest_sha }}
+          name: libavif ${{ needs.detect.outputs.latest_sha }}
+          body: |
+            Automated daily build for libavif commit ${{ needs.detect.outputs.latest_sha }}.
+            - Built with dav1d (system) and libyuv (static, enabled)
+            - Artifacts: win32 and win64 DLLs and import libs
+          files: |
+            artifacts/avif-win32/*
+            artifacts/avif-win64/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
