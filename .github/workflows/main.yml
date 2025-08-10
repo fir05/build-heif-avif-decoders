@@ -47,14 +47,16 @@ jobs:
           cd libavif
           mkdir build
           cd build
-          powershell -Command "Set-Content -Path exports.def -Value 'LIBRARY avif`nEXPORTS`n    avifImageRGBToYUV`n    avifImageYUVToRGB`n'"
-          powershell -Command "Set-Content -Path exports.cmake -Value 'set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)`nadd_definitions(/DAVIF_BUILDING_SHARED)'"
-          cmake .. -G Ninja -DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=exports.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON -DCMAKE_SHARED_LINKER_FLAGS="/DEF:exports.def" -DAVIF_BUILD_SHARED_LIBS=ON -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_LIBYUV=ON -DAVIF_LOCAL_LIBYUV=ON -DDAV1D_INCLUDE_DIR="c:/include" -DDAV1D_LIBRARY="c:/lib/dav1d.lib"
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DAVIF_BUILD_SHARED_LIBS=ON -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_LIBYUV=ON -DAVIF_LOCAL_LIBYUV=ON -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON -DDAV1D_INCLUDE_DIR="c:/include" -DDAV1D_LIBRARY="c:/lib/dav1d.lib"
           ninja
       - name: Verify YUV APIs are exported
         shell: cmd
         run: |
           cd libavif\build && dumpbin /EXPORTS avif.dll | findstr /I "avifImageRGBToYUV avifImageYUVToRGB" || (echo Expected YUV conversion APIs not exported & exit /b 1)
+      - name: Verify no libyuv DLL dependency
+        shell: cmd
+        run: |
+          cd libavif\build && dumpbin /DEPENDENTS avif.dll | findstr /I "yuv" >nul && (echo Found unexpected libyuv dependency & exit /b 1) || echo No libyuv dependency
       - name: moving
         run: |
           mkdir upload
