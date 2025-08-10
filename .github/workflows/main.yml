@@ -47,12 +47,12 @@ jobs:
           cd libavif
           mkdir build
           cd build
-          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DAVIF_BUILD_SHARED_LIBS=ON -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_LIBYUV=LOCAL -DDAV1D_INCLUDE_DIR="c:/include" -DDAV1D_LIBRARY="c:/lib/dav1d.lib"
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DAVIF_BUILD_SHARED_LIBS=ON -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_LIBYUV=ON -DAVIF_LOCAL_LIBYUV=ON -DDAV1D_INCLUDE_DIR="c:/include" -DDAV1D_LIBRARY="c:/lib/dav1d.lib"
           ninja
-          dumpbin /EXPORTS avif.dll | findstr /I "avifImageRGBToYUV avifImageYUVToRGB"
-          if errorlevel 1 (
-            echo "Expected YUV conversion APIs not exported" & exit /b 1
-          )
+      - name: Verify YUV APIs are exported
+        shell: cmd
+        run: |
+          cd libavif\build && dumpbin /EXPORTS avif.dll | findstr /I "avifImageRGBToYUV avifImageYUVToRGB" || (echo Expected YUV conversion APIs not exported & exit /b 1)
       - name: moving
         run: |
           mkdir upload

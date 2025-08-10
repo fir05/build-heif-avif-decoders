@@ -58,21 +58,17 @@ jobs:
           echo "latest_ref=origin/main" >> $GITHUB_OUTPUT
 
   build-windows:
-    name: Build avif.dll (${{ matrix.arch }})
+    name: Build avif.dll (win64)
     needs: detect
     if: needs.detect.outputs.should_build == 'true'
     runs-on: windows-2022
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [win64, win32]
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: ${{ matrix.arch }}
+          arch: win64
       - name: Prepare dependencies
         shell: bash
         run: |
@@ -93,28 +89,28 @@ jobs:
           cd build
           meson ..
           ninja install
-      - name: Build libavif with libyuv (static) and export YUV APIs
+      - name: Build libavif with libyuv (static)
         shell: bash
         run: |
           cd libavif
           mkdir -p build
           cd build
-          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DAVIF_BUILD_SHARED_LIBS=ON -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_LIBYUV=LOCAL -DDAV1D_INCLUDE_DIR="c:/include" -DDAV1D_LIBRARY="c:/lib/dav1d.lib"
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DAVIF_BUILD_SHARED_LIBS=ON -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_LIBYUV=ON -DAVIF_LOCAL_LIBYUV=ON -DDAV1D_INCLUDE_DIR="c:/include" -DDAV1D_LIBRARY="c:/lib/dav1d.lib"
           ninja
-          dumpbin /EXPORTS avif.dll | findstr /I "avifImageRGBToYUV avifImageYUVToRGB"
-          if errorlevel 1 (
-            echo "Expected YUV conversion APIs not exported" & exit /b 1
-          )
+      - name: Verify YUV APIs are exported
+        shell: cmd
+        run: |
+          cd libavif\build && dumpbin /EXPORTS avif.dll | findstr /I "avifImageRGBToYUV avifImageYUVToRGB" || (echo Expected YUV conversion APIs not exported & exit /b 1)
       - name: Collect artifacts
         shell: bash
         run: |
           mkdir -p upload
-          cp libavif/build/avif.dll upload/avif-${{ matrix.arch }}.dll
-          cp libavif/build/avif.lib upload/avif-${{ matrix.arch }}.lib
+          cp libavif/build/avif.dll upload/avif-win64.dll
+          cp libavif/build/avif.lib upload/avif-win64.lib
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: avif-${{ matrix.arch }}
+          name: avif-win64
           path: upload
 
   release:
@@ -135,9 +131,8 @@ jobs:
           body: |
             Automated daily build for libavif commit ${{ needs.detect.outputs.latest_sha }}.
             - Built with dav1d (system) and libyuv (static, enabled)
-            - Artifacts: win32 and win64 DLLs and import libs
+            - Artifacts: win64 DLL and import lib
           files: |
-            artifacts/avif-win32/*
             artifacts/avif-win64/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
