@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-2019
+    runs-on: windows-2022
     
     # Run a job for each of the specified target architectures:
     strategy:
